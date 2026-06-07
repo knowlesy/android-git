@@ -46,12 +46,22 @@ class MainScreenViewModel(application: Application) : AndroidViewModel(applicati
     private val _hasStoragePermission = MutableStateFlow(false)
     val hasStoragePermission: StateFlow<Boolean> = _hasStoragePermission.asStateFlow()
 
+    private val _isIgnoringBatteryOptimizations = MutableStateFlow(false)
+    val isIgnoringBatteryOptimizations: StateFlow<Boolean> = _isIgnoringBatteryOptimizations.asStateFlow()
+
     init {
         checkPermissionsState()
+        checkBatteryOptimizationState()
         refreshLogs()
     }
 
+    fun checkBatteryOptimizationState() {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        _isIgnoringBatteryOptimizations.value = powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
     fun checkPermissionsState() {
+        checkBatteryOptimizationState()
         _hasStoragePermission.value = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
