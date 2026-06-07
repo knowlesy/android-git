@@ -1,4 +1,4 @@
-name: Android CI
+name: Android CI & Build Artifacts
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 
 jobs:
   build:
+    name: Build and Package App
     runs-on: ubuntu-latest
 
     steps:
@@ -24,5 +25,35 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Build with Gradle
+    - name: Build Debug APK
       run: ./gradlew assembleDebug
+
+    - name: Sign APK (if secrets are configured)
+      id: sign_apk
+      if: env.has_secrets == 'true'
+      uses: r0adrunner/sign-apk@v1
+      with:
+        releaseDirectory: app/build/outputs/apk/debug
+        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+        alias: ${{ secrets.KEY_ALIAS }}
+        keyStorePassword: ${{ secrets.KEYSTORE_PASSWORD }}
+        keyPassword: ${{ secrets.KEY_PASSWORD }}
+      env:
+        BUILD_TOOLS_VERSION: "34.0.0"
+        has_secrets: ${{ secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
+
+    - name: Upload Signed APK
+      if: steps.sign_apk.outcome == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: git-sync-app-signed
+        path: ${{ steps.sign_apk.outputs.signedApkFile }}
+        retention-days: 14
+
+    - name: Upload Unsigned Debug APK (Fallback)
+      if: steps.sign_apk.outcome != 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: git-sync-app-debug
+        path: app/build/outputs/apk/debug/app-debug.apk
+        retention-days: 14
