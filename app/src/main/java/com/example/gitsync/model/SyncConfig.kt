@@ -2,9 +2,32 @@ package com.example.gitsync.model
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 
 class SyncConfig(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("git_sync_prefs", Context.MODE_PRIVATE)
+
+    private val masterKey = MasterKey.Builder(context)
+        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+        .build()
+
+    private val encryptedPrefs: SharedPreferences = EncryptedSharedPreferences.create(
+        context,
+        "git_sync_encrypted_prefs",
+        masterKey,
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+    )
+
+    init {
+        // Migrate legacy unencrypted PAT token to EncryptedSharedPreferences if it exists
+        val legacyToken = prefs.getString(KEY_PAT_TOKEN, "")
+        if (!legacyToken.isNullOrEmpty()) {
+            encryptedPrefs.edit().putString(KEY_PAT_TOKEN, legacyToken).apply()
+            prefs.edit().remove(KEY_PAT_TOKEN).apply()
+        }
+    }
 
     companion object {
         const val KEY_GIT_URL = "git_url"
@@ -30,8 +53,8 @@ class SyncConfig(context: Context) {
         set(value) = prefs.edit().putString(KEY_EMAIL, value.trim()).apply()
 
     var patToken: String
-        get() = prefs.getString(KEY_PAT_TOKEN, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_PAT_TOKEN, value.trim()).apply()
+        get() = encryptedPrefs.getString(KEY_PAT_TOKEN, "") ?: ""
+        set(value) = encryptedPrefs.edit().putString(KEY_PAT_TOKEN, value.trim()).apply()
 
     var syncFolder: String
         get() = prefs.getString(KEY_SYNC_FOLDER, "") ?: ""
