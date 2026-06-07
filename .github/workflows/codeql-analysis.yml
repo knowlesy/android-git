@@ -43,7 +43,7 @@ jobs:
       run: chmod +x gradlew
 
     - name: Build Android App for Analysis
-      run: ./gradlew assembleDebug
+      run: ./gradlew clean assembleDebug --no-daemon
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v3

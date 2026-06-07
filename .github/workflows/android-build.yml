@@ -30,8 +30,8 @@ jobs:
 
     - name: Sign APK (if secrets are configured)
       id: sign_apk
-      if: ${{ secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
-      uses: r0adrunner/sign-apk@v1
+      if: secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != ''
+      uses: r0adkll/sign-android-release@v1
       with:
         releaseDirectory: app/build/outputs/apk/debug
         signingKeyBase64: ${{ secrets.SIGNING_KEY }}
@@ -46,7 +46,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: git-sync-app-signed
-        path: ${{ steps.sign_apk.outputs.signedApkFile }}
+        path: ${{ steps.sign_apk.outputs.signedReleaseFile }}
         retention-days: 14
 
     - name: Upload Unsigned Debug APK (Fallback)
