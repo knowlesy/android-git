@@ -1,15 +1,21 @@
-*.iml
-.gradle
+# Gradle files
+.gradle/
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+*.keystore
+*.jks
+
+# Build outputs
+/build/
+/*/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# IDEs and OS files
+*.iml
+.idea/
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+Thumbs.db
+
+# Secrets & Env
+.env*
