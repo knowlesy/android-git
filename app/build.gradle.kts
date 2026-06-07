@@ -9,10 +9,10 @@ plugins {
 }
 
 android {
-    namespace = "com.example.gitsync"
+    namespace = "com.knowlesy.gitsync"
     compileSdk = 36
     defaultConfig {
-        applicationId = "com.example.gitsync"
+        applicationId = "com.knowlesy.gitsync"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
