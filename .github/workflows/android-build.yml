@@ -10,6 +10,8 @@ jobs:
   build:
     name: Build and Package App
     runs-on: ubuntu-latest
+    env:
+      HAS_SECRETS: ${{ secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
 
     steps:
     - name: Checkout Code
@@ -30,7 +32,7 @@ jobs:
 
     - name: Sign APK (if secrets are configured)
       id: sign_apk
-      if: secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != ''
+      if: env.HAS_SECRETS == 'true'
       uses: r0adkll/sign-android-release@v1
       with:
         releaseDirectory: app/build/outputs/apk/debug
