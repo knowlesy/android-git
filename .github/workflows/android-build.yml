@@ -30,7 +30,7 @@ jobs:
 
     - name: Sign APK (if secrets are configured)
       id: sign_apk
-      if: env.has_secrets == 'true'
+      if: ${{ secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
       uses: r0adrunner/sign-apk@v1
       with:
         releaseDirectory: app/build/outputs/apk/debug
@@ -40,7 +40,6 @@ jobs:
         keyPassword: ${{ secrets.KEY_PASSWORD }}
       env:
         BUILD_TOOLS_VERSION: "34.0.0"
-        has_secrets: ${{ secrets.SIGNING_KEY != '' && secrets.KEY_ALIAS != '' && secrets.KEYSTORE_PASSWORD != '' && secrets.KEY_PASSWORD != '' }}
 
     - name: Upload Signed APK
       if: steps.sign_apk.outcome == 'success'
