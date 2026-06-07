@@ -14,6 +14,15 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
+    if (intent?.getBooleanExtra("trigger_sync", false) == true) {
+      Thread {
+        android.util.Log.d("GitSyncDebug", "Starting command-line triggered sync...")
+        val engine = com.example.gitsync.git.GitSyncEngine(applicationContext)
+        val result = engine.executeSync()
+        android.util.Log.d("GitSyncDebug", "Command-line triggered sync completed: $result")
+      }.start()
+    }
+
     enableEdgeToEdge()
     setContent {
       GitSyncTheme { Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { MainNavigation() } }

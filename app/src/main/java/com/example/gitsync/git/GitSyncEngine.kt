@@ -6,12 +6,14 @@ import com.example.gitsync.model.SyncLogger
 import org.eclipse.jgit.api.CheckoutCommand
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.MergeResult
+import org.eclipse.jgit.api.ResetCommand
 import org.eclipse.jgit.dircache.DirCache
 import org.eclipse.jgit.dircache.DirCacheEntry
 import org.eclipse.jgit.lib.Repository
 import org.eclipse.jgit.transport.HttpTransport
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
 import org.eclipse.jgit.transport.http.JDKHttpConnectionFactory
+import android.media.MediaScannerConnection
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -32,21 +34,34 @@ class GitSyncEngine(private val context: Context) {
         // Ensure JGit uses JDK's standard HTTPS stack which supports standard TLS/SSL on Android
         try {
             HttpTransport.setConnectionFactory(JDKHttpConnectionFactory())
+
+            // Configure WindowCache for resource-constrained Android devices to prevent GC/Inflater closure
+            val cacheConfig = org.eclipse.jgit.storage.file.WindowCacheConfig().apply {
+                packedGitLimit = 32 * 1024 * 1024 // 32 MB
+                packedGitWindowSize = 16 * 1024 // 16 KB
+                packedGitOpenFiles = 128
+                isPackedGitMMAP = false // Disable MMAP for Android stability
+            }
+            cacheConfig.install()
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    @Synchronized
-    fun executeSync(): SyncResult {
-        if (!config.isValid()) {
-            val errMsg = "Sync configuration is incomplete."
-            logger.logError(errMsg)
-            return SyncResult(false, "ERROR", errMsg)
-        }
+    companion object {
+        private val syncLock = Any()
+    }
 
-        var git: Git? = null
-        try {
+    fun executeSync(): SyncResult {
+        synchronized(syncLock) {
+            if (!config.isValid()) {
+                val errMsg = "Sync configuration is incomplete."
+                logger.logError(errMsg)
+                return SyncResult(false, "ERROR", errMsg)
+            }
+
+            var git: Git? = null
+            try {
             val localDir = File(config.syncFolder)
             if (!localDir.exists()) {
                 val created = localDir.mkdirs()
@@ -58,25 +73,83 @@ class GitSyncEngine(private val context: Context) {
             val isGitRepo = File(localDir, ".git").exists()
             val credentials = UsernamePasswordCredentialsProvider(config.username, config.patToken)
 
-            if (!isGitRepo) {
-                // If local directory has no files, perform a clean clone
-                val files = localDir.list()
-                if (files.isNullOrEmpty()) {
-                    Git.cloneRepository()
-                        .setURI(config.gitUrl)
-                        .setDirectory(localDir)
-                        .setCredentialsProvider(credentials)
-                        .call()
-                        .use { cl ->
-                            val msg = "Cloned remote repository successfully."
-                            logger.logSuccess(msg)
-                            return SyncResult(true, "SUCCESS", msg)
+            // Detect if clone previously failed leaving a broken/empty .git folder
+            val contents = localDir.listFiles() ?: emptyArray()
+            val nonGitContents = contents.filter { it.name != ".git" }
+            
+            var isBrokenClone = false
+            if (isGitRepo && nonGitContents.isEmpty()) {
+                try {
+                    Git.open(localDir).use { g ->
+                        isBrokenClone = g.repository.resolve("HEAD") == null
+                    }
+                } catch (e: Exception) {
+                    isBrokenClone = true
+                }
+            }
+
+            val actualGitRepo = isGitRepo && !isBrokenClone
+
+            if (!actualGitRepo) {
+                if (isGitRepo) {
+                    // Clean up broken git folder so we can clone freshly
+                    File(localDir, ".git").deleteRecursively()
+                }
+
+                // Check if directory has actual user files (not starting with .)
+                val hasUserFiles = localDir.listFiles()?.any { !it.name.startsWith(".") } ?: false
+
+                if (!hasUserFiles) {
+                    // Scenario B: No user files. We can do a clean clone-and-overlay.
+                    val tempCloneDir = File(context.cacheDir, "temp_clone_${System.currentTimeMillis()}")
+                    if (tempCloneDir.exists()) tempCloneDir.deleteRecursively()
+                    tempCloneDir.mkdirs()
+
+                    try {
+                        android.util.Log.d("GitSyncDebug", "Starting clean clone into temp directory...")
+                        Git.cloneRepository()
+                            .setURI(config.gitUrl)
+                            .setDirectory(tempCloneDir)
+                            .setCredentialsProvider(credentials)
+                            .setCloneAllBranches(true)
+                            .setBranch("refs/heads/main")
+                            .call()
+                            .close()
+
+                        android.util.Log.d("GitSyncDebug", "Clone successful. Overlaying config files...")
+                        
+                        // Overlay existing config/dot files from localDir to tempCloneDir
+                        localDir.listFiles()?.forEach { file ->
+                            if (file.name != ".git") {
+                                val dest = File(tempCloneDir, file.name)
+                                file.copyRecursively(dest, overwrite = true)
+                            }
                         }
+
+                        // Clear localDir completely
+                        localDir.listFiles()?.forEach { it.deleteRecursively() }
+
+                        android.util.Log.d("GitSyncDebug", "Moving cloned repository contents to local sync folder...")
+                        // Move tempCloneDir contents to localDir
+                        moveDirContents(tempCloneDir, localDir)
+                        tempCloneDir.deleteRecursively()
+
+                        scanFilesRecursively(context, localDir)
+                        val msg = "Cloned remote repository successfully (with local configs preserved)."
+                        logger.logSuccess(msg)
+                        return SyncResult(true, "SUCCESS", msg)
+
+                    } catch (e: Exception) {
+                        android.util.Log.e("GitSyncDebug", "Clone-and-overlay failed", e)
+                        tempCloneDir.deleteRecursively()
+                        throw e
+                    }
                 } else {
-                    // Local directory has files, initialize local Git repository first
+                    // Scenario A: Local directory has files, initialize local Git repository first
                     Git.init().setDirectory(localDir).call().use { inited ->
                         val repoConfig = inited.repository.config
                         repoConfig.setString("remote", "origin", "url", config.gitUrl)
+                        repoConfig.setString("remote", "origin", "fetch", "+refs/heads/*:refs/remotes/origin/*")
                         repoConfig.save()
                     }
 
@@ -99,6 +172,13 @@ class GitSyncEngine(private val context: Context) {
             git = Git.open(localDir)
             val repo = git.repository
             val branch = repo.branch ?: "main"
+
+            // Self-healing check: if working directory has only .git but HEAD exists, do a hard checkout
+            val currentContents = localDir.listFiles() ?: emptyArray()
+            val currentNonGit = currentContents.filter { it.name != ".git" }
+            if (currentNonGit.isEmpty() && repo.resolve("HEAD") != null) {
+                git.reset().setMode(ResetCommand.ResetType.HARD).call()
+            }
 
             // 1. Stage and commit local changes
             git.add().addFilepattern(".").call()
@@ -165,6 +245,9 @@ class GitSyncEngine(private val context: Context) {
                 "Sync successful."
             }
 
+            // Run Media Scanner to ensure files immediately index in Android Files/MediaStore
+            scanFilesRecursively(context, localDir)
+
             if (conflicted) {
                 logger.logConflict(resultMsg, changedFilesList)
                 return SyncResult(true, "CONFLICT", resultMsg, changedFilesList)
@@ -174,12 +257,14 @@ class GitSyncEngine(private val context: Context) {
             }
 
         } catch (e: Exception) {
+            e.printStackTrace()
             val errorMsg = e.message ?: e.toString()
             logger.logError("Sync failed: $errorMsg")
             return SyncResult(false, "ERROR", errorMsg)
         } finally {
             git?.close()
         }
+      }
     }
 
     private fun handleMergeConflicts(repo: Repository, git: Git, conflictPaths: Set<String>) {
@@ -270,6 +355,27 @@ class GitSyncEngine(private val context: Context) {
         }
     }
 
+    private fun scanFilesRecursively(context: Context, directory: File) {
+        try {
+            val paths = mutableListOf<String>()
+            directory.walkTopDown().forEach { file ->
+                // Ignore hidden files/directories (like .git, .obsidian-mobile)
+                if (!file.name.startsWith(".") && file.isFile) {
+                    paths.add(file.absolutePath)
+                }
+            }
+            if (paths.isNotEmpty()) {
+                MediaScannerConnection.scanFile(
+                    context,
+                    paths.toTypedArray(),
+                    null
+                ) { _, _ -> }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private fun getEntryForStage(dirCache: DirCache, path: String, stage: Int): DirCacheEntry? {
         for (i in 0 until dirCache.entryCount) {
             val entry = dirCache.getEntry(i)
@@ -279,4 +385,21 @@ class GitSyncEngine(private val context: Context) {
         }
         return null
     }
+
+    private fun moveDirContents(src: File, dest: File) {
+        src.listFiles()?.forEach { file ->
+            val target = File(dest, file.name)
+            if (file.isDirectory) {
+                target.mkdirs()
+                moveDirContents(file, target)
+                file.delete()
+            } else {
+                if (!file.renameTo(target)) {
+                    file.copyTo(target, overwrite = true)
+                    file.delete()
+                }
+            }
+        }
+    }
 }
+
